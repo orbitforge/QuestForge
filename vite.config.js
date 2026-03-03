@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  base: './', // Use relative paths for GitHub Pages
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
@@ -13,7 +14,7 @@ export default defineConfig({
         theme_color: '#0f0f1a',
         background_color: '#0f0f1a',
         display: 'standalone',
-        start_url: '/',
+        start_url: './index.html', // Point to index.html for relative path deployment
         icons: [
           {
             src: 'icon-192.png',
