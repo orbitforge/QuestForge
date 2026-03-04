@@ -1,10 +1,10 @@
 /* ═══════════════════════════════════════════════
-   QuestForge — Main Entry Point
+   QuestForge — Main Entry Point (V2)
    ═══════════════════════════════════════════════ */
 
 import './style.css';
 import db from './db.js';
-import { checkOverdue, checkDormancy } from './engine/questEngine.js';
+import { checkOverdue, checkDormancy, checkSnoozeExpiry } from './engine/questEngine.js';
 import { getMomentumState, formatMomentumTimer } from './engine/momentumEngine.js';
 import { getDailyXP } from './engine/xpEngine.js';
 import { renderQuestList } from './components/questList.js';
@@ -20,23 +20,15 @@ let momentumInterval = null;
 
 // ── Boot ────────────────────────────────────────
 async function init() {
-    // Run lifecycle checks
+    // Run lifecycle checks (V2: includes snooze expiry)
+    await checkSnoozeExpiry();
     await checkOverdue();
     await checkDormancy();
 
-    // Update daily XP display
     await refreshDailyXP();
-
-    // Start momentum timer if active
     startMomentumTimer();
-
-    // Setup tab navigation
     setupTabs();
-
-    // Setup import button
     setupImportButton();
-
-    // Render initial view
     await renderTab('quests');
 }
 
@@ -93,12 +85,10 @@ function openQuestForm(quest) {
         await refreshAll();
     }, closeQuestModal);
 
-    // Close on backdrop click
     modal.onclick = (e) => {
         if (e.target === modal) closeQuestModal();
     };
 
-    // Close on Escape
     const escHandler = (e) => {
         if (e.key === 'Escape') {
             closeQuestModal();
@@ -171,6 +161,7 @@ async function startMomentumTimer() {
 
 // ── Refresh All ─────────────────────────────────
 async function refreshAll() {
+    await checkSnoozeExpiry();
     await checkOverdue();
     await checkDormancy();
     await refreshDailyXP();

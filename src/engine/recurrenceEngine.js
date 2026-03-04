@@ -1,9 +1,10 @@
 /* ═══════════════════════════════════════════════
-   Recurrence Engine
+   Recurrence Engine (V2)
    Completion-spawn only, no stacking
    ═══════════════════════════════════════════════ */
 
-import { createQuest, generateId, createObjective, STATUS } from '../schema.js';
+import { createQuest, generateId, createObjective, STATUS, EVENT } from '../schema.js';
+import { emitEvent } from './eventBus.js';
 import db from '../db.js';
 
 /**
@@ -21,7 +22,6 @@ function calculateNextDueDate(completedDate, rule) {
         case 'weekly': {
             const interval = rule.interval || 1;
             if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
-                // Find next matching day of week
                 let found = false;
                 for (let i = 1; i <= 7 * interval; i++) {
                     const candidate = new Date(base);
@@ -60,8 +60,6 @@ function calculateNextDueDate(completedDate, rule) {
  */
 export async function spawnNextInstance(quest) {
     if (!quest.recurringRule) return null;
-
-    // Guard: only spawn from a completed quest
     if (quest.status !== STATUS.COMPLETED) return null;
 
     // Check for existing active instance to prevent stacking
@@ -71,7 +69,7 @@ export async function spawnNextInstance(quest) {
         .filter(q => q.title === quest.title && q.recurringRule != null)
         .first();
 
-    if (existing) return null; // No stacking
+    if (existing) return null;
 
     const now = new Date().toISOString();
     const nextDue = calculateNextDueDate(now, quest.recurringRule);
@@ -85,12 +83,13 @@ export async function spawnNextInstance(quest) {
         difficulty: quest.difficulty,
         xpBase: quest.xpBase,
         xpPerObjective: quest.xpPerObjective,
-        // Fresh objectives — every one reset to incomplete
         objectives: quest.objectives.map(o => createObjective(o.text)),
         dueDate: nextDue,
         overdueThresholdDays: quest.overdueThresholdDays,
+        overdueEscalationDays: quest.overdueEscalationDays,
         recurringRule: { ...quest.recurringRule },
-        // Explicit state resets — prevent any leakage
+        template: quest.template,
+        // Explicit state resets
         status: STATUS.ACTIVE,
         completedAt: null,
         createdAt: now,
@@ -99,5 +98,12 @@ export async function spawnNextInstance(quest) {
     });
 
     await db.quests.add(newQuest);
+
+    // Emit recurrence event
+    await emitEvent(EVENT.RECURRENCE_SPAWNED, newQuest.id, {
+        parentQuestId: quest.id,
+        nextDueDate: nextDue
+    });
+
     return newQuest;
 }

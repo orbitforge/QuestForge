@@ -1,17 +1,19 @@
 /* ═══════════════════════════════════════════════
-   Quest Engine — State Machine & Core Logic
+   Quest Engine — State Machine & Core Logic (V2)
    ═══════════════════════════════════════════════ */
 
 import db from '../db.js';
-import { STATUS, DORMANCY_THRESHOLD_DAYS, DEFAULT_OVERDUE_THRESHOLD_DAYS, createLegendEntry } from '../schema.js';
+import {
+    STATUS, URGENCY, SNOOZE_TYPE,
+    DORMANCY_THRESHOLD_DAYS, DEFAULT_OVERDUE_THRESHOLD_DAYS, DEFAULT_ESCALATION_DAYS,
+    EVENT, createLegendEntry
+} from '../schema.js';
 import { calculateXP } from './xpEngine.js';
 import { applyMomentum } from './momentumEngine.js';
 import { spawnNextInstance } from './recurrenceEngine.js';
+import { emitEvent } from './eventBus.js';
 
-/**
- * Toggle an objective on a quest
- * Returns updated quest
- */
+// ── Objective Toggle ────────────────────────────
 export async function toggleObjective(questId, objectiveId) {
     const quest = await db.quests.get(questId);
     if (!quest || quest.status === STATUS.COMPLETED || quest.status === STATUS.RETIRED) return null;
@@ -22,12 +24,15 @@ export async function toggleObjective(questId, objectiveId) {
     obj.completed = !obj.completed;
     quest.lastProgressAt = new Date().toISOString();
 
-    // If quest was dormant, reactivate on progress
-    if (quest.status === STATUS.DORMANT) {
+    // Reactivate dormant or snoozed quests on progress
+    if (quest.status === STATUS.DORMANT || quest.status === STATUS.SNOOZED) {
         quest.status = STATUS.ACTIVE;
+        quest.snoozedUntil = null;
+        quest.snoozeType = null;
     }
 
     await db.quests.put(quest);
+    await emitEvent(EVENT.OBJECTIVE_TOGGLED, questId, { objectiveId, completed: obj.completed });
 
     // Check if all objectives are now complete
     const allComplete = quest.objectives.length > 0 && quest.objectives.every(o => o.completed);
@@ -38,50 +43,39 @@ export async function toggleObjective(questId, objectiveId) {
     return { quest, completed: false, xpEarned: 0 };
 }
 
-/**
- * Complete a quest — all objectives must be done
- * Returns { quest, xpEarned, momentumBonusApplied, legendEntry }
- */
+// ── Complete Quest ──────────────────────────────
 export async function completeQuest(questId) {
     const quest = await db.quests.get(questId);
     if (!quest) return null;
 
-    // Guard: prevent double-completion (XP protection)
-    if (quest.status === STATUS.COMPLETED || quest.completedAt) {
-        return null;
-    }
-
-    // Guard: prevent recurrence cascade re-trigger
-    if (quest._recurrenceProcessed) {
-        return null;
-    }
+    // Guard: prevent double-completion
+    if (quest.status === STATUS.COMPLETED || quest.completedAt) return null;
+    if (quest._recurrenceProcessed) return null;
 
     // Verify all objectives complete
-    if (quest.objectives.length > 0 && !quest.objectives.every(o => o.completed)) {
-        return null; // Can't complete with incomplete objectives
-    }
+    if (quest.objectives.length > 0 && !quest.objectives.every(o => o.completed)) return null;
 
     // Check momentum (difficulty >= 2 qualifies)
     let momentumBonus = 0;
     let momentumBonusApplied = false;
     if (quest.difficulty >= 2) {
-        momentumBonus = await applyMomentum();
+        momentumBonus = await applyMomentum(questId);
         momentumBonusApplied = momentumBonus > 0;
     }
 
-    // Calculate XP
+    // Calculate XP (V2: includes overdue redemption bonus)
     const xpEarned = calculateXP(quest, momentumBonus);
 
-    // Update quest — mark completed and flag recurrence as processed
+    // Update quest
     quest.status = STATUS.COMPLETED;
     quest.completedAt = new Date().toISOString();
-    quest._recurrenceProcessed = false; // will be set true after spawn
+    quest.snoozedUntil = null;
+    quest.snoozeType = null;
+    quest._recurrenceProcessed = false;
     await db.quests.put(quest);
 
-    // Guard: prevent duplicate legendLog entries for same quest
-    const existingLog = await db.legendLog
-        .filter(e => e.questId === questId)
-        .first();
+    // Guard: prevent duplicate legendLog entries
+    const existingLog = await db.legendLog.filter(e => e.questId === questId).first();
     let legendEntry;
     if (!existingLog) {
         legendEntry = createLegendEntry(quest, xpEarned, momentumBonusApplied);
@@ -90,11 +84,14 @@ export async function completeQuest(questId) {
         legendEntry = existingLog;
     }
 
-    // Handle recurrence — runs ONLY here inside the completion handler
+    // Emit events
+    await emitEvent(EVENT.QUEST_COMPLETED, questId, { xpEarned, momentumBonusApplied });
+    await emitEvent(EVENT.XP_AWARDED, questId, { xp: xpEarned });
+
+    // Handle recurrence
     let spawnedQuest = null;
     if (quest.recurringRule && !quest._recurrenceProcessed) {
         spawnedQuest = await spawnNextInstance(quest);
-        // Mark recurrence as processed to prevent re-trigger
         quest._recurrenceProcessed = true;
         await db.quests.put(quest);
     }
@@ -102,26 +99,54 @@ export async function completeQuest(questId) {
     return { quest, xpEarned, momentumBonusApplied, legendEntry, spawnedQuest, completed: true };
 }
 
-/**
- * Check for overdue quests
- */
+// ── Overdue Check (V2: urgency escalation) ──────
 export async function checkOverdue() {
     const now = new Date();
     const activeQuests = await db.quests
         .where('status')
-        .equals(STATUS.ACTIVE)
+        .anyOf([STATUS.ACTIVE, STATUS.OVERDUE])
         .toArray();
 
     const updated = [];
     for (const quest of activeQuests) {
-        if (quest.dueDate) {
-            // Apply overdue threshold guard: default 3 days if null/undefined
-            const thresholdDays = quest.overdueThresholdDays ?? DEFAULT_OVERDUE_THRESHOLD_DAYS;
-            const dueDate = new Date(quest.dueDate);
-            dueDate.setDate(dueDate.getDate() + thresholdDays);
-            if (now > dueDate) {
-                quest.status = STATUS.OVERDUE;
-                await db.quests.put(quest);
+        if (!quest.dueDate) continue;
+
+        // Skip hard-snoozed quests
+        if (quest.snoozeType === SNOOZE_TYPE.HARD && quest.snoozedUntil) {
+            const snoozeEnd = new Date(quest.snoozedUntil);
+            if (now < snoozeEnd) continue;
+        }
+
+        const thresholdDays = quest.overdueThresholdDays ?? DEFAULT_OVERDUE_THRESHOLD_DAYS;
+        const dueDate = new Date(quest.dueDate);
+        const overdueDate = new Date(dueDate);
+        overdueDate.setDate(overdueDate.getDate() + thresholdDays);
+
+        if (now > overdueDate) {
+            // Calculate urgency escalation
+            const daysPastDue = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
+            const escalationDays = quest.overdueEscalationDays ?? DEFAULT_ESCALATION_DAYS;
+            let newUrgency = URGENCY.LOW;
+
+            if (daysPastDue >= escalationDays * 2) {
+                newUrgency = URGENCY.CRITICAL;
+            } else if (daysPastDue >= escalationDays) {
+                newUrgency = URGENCY.MODERATE;
+            } else {
+                newUrgency = URGENCY.LOW;
+            }
+
+            const statusChanged = quest.status !== STATUS.OVERDUE;
+            const urgencyChanged = quest.urgencyLevel !== newUrgency;
+
+            quest.status = STATUS.OVERDUE;
+            quest.urgencyLevel = newUrgency;
+            await db.quests.put(quest);
+
+            if (statusChanged) {
+                await emitEvent(EVENT.QUEST_OVERDUE, quest.id, { urgencyLevel: newUrgency });
+            }
+            if (statusChanged || urgencyChanged) {
                 updated.push(quest);
             }
         }
@@ -129,9 +154,7 @@ export async function checkOverdue() {
     return updated;
 }
 
-/**
- * Check for dormant Learning quests (no progress in 7 days)
- */
+// ── Dormancy Check ──────────────────────────────
 export async function checkDormancy() {
     const threshold = new Date();
     threshold.setDate(threshold.getDate() - DORMANCY_THRESHOLD_DAYS);
@@ -150,15 +173,62 @@ export async function checkDormancy() {
         ) {
             quest.status = STATUS.DORMANT;
             await db.quests.put(quest);
+            await emitEvent(EVENT.QUEST_DORMANT, quest.id, {});
             updated.push(quest);
         }
     }
     return updated;
 }
 
-/**
- * Count overdue quests per category
- */
+// ── Snooze ──────────────────────────────────────
+export async function snoozeQuest(questId, until, type = SNOOZE_TYPE.SOFT) {
+    const quest = await db.quests.get(questId);
+    if (!quest || quest.status === STATUS.COMPLETED || quest.status === STATUS.RETIRED) return null;
+
+    quest.status = STATUS.SNOOZED;
+    quest.snoozedUntil = until;
+    quest.snoozeType = type;
+    await db.quests.put(quest);
+    await emitEvent(EVENT.QUEST_SNOOZED, questId, { until, type });
+    return quest;
+}
+
+export async function unsnoozeQuest(questId) {
+    const quest = await db.quests.get(questId);
+    if (!quest || quest.status !== STATUS.SNOOZED) return null;
+
+    quest.status = STATUS.ACTIVE;
+    quest.snoozedUntil = null;
+    quest.snoozeType = null;
+    quest.lastProgressAt = new Date().toISOString();
+    await db.quests.put(quest);
+    await emitEvent(EVENT.QUEST_UNSNOOZED, questId, {});
+    return quest;
+}
+
+export async function checkSnoozeExpiry() {
+    const now = new Date().toISOString();
+    const snoozedQuests = await db.quests
+        .where('status')
+        .equals(STATUS.SNOOZED)
+        .toArray();
+
+    const updated = [];
+    for (const quest of snoozedQuests) {
+        if (quest.snoozedUntil && quest.snoozedUntil <= now) {
+            quest.status = STATUS.ACTIVE;
+            quest.snoozedUntil = null;
+            quest.snoozeType = null;
+            quest.lastProgressAt = new Date().toISOString();
+            await db.quests.put(quest);
+            await emitEvent(EVENT.QUEST_UNSNOOZED, quest.id, { auto: true });
+            updated.push(quest);
+        }
+    }
+    return updated;
+}
+
+// ── Overdue By Category ─────────────────────────
 export async function getOverdueByCategory() {
     const overdueQuests = await db.quests
         .where('status')
@@ -172,32 +242,30 @@ export async function getOverdueByCategory() {
     return counts;
 }
 
-/**
- * Reactivate a dormant quest
- */
+// ── Reactivate ──────────────────────────────────
 export async function reactivateQuest(questId) {
     const quest = await db.quests.get(questId);
-    if (!quest || quest.status !== STATUS.DORMANT) return null;
+    if (!quest || (quest.status !== STATUS.DORMANT && quest.status !== STATUS.SNOOZED)) return null;
     quest.status = STATUS.ACTIVE;
+    quest.snoozedUntil = null;
+    quest.snoozeType = null;
     quest.lastProgressAt = new Date().toISOString();
     await db.quests.put(quest);
+    await emitEvent(EVENT.QUEST_REACTIVATED, questId, {});
     return quest;
 }
 
-/**
- * Retire a quest
- */
+// ── Retire ──────────────────────────────────────
 export async function retireQuest(questId) {
     const quest = await db.quests.get(questId);
     if (!quest) return null;
     quest.status = STATUS.RETIRED;
     await db.quests.put(quest);
+    await emitEvent(EVENT.QUEST_RETIRED, questId, {});
     return quest;
 }
 
-/**
- * Get all quests grouped by status
- */
+// ── Query ───────────────────────────────────────
 export async function getQuestsByStatus() {
     const all = await db.quests.toArray();
     return {
@@ -208,6 +276,11 @@ export async function getQuestsByStatus() {
             return a.dueDate.localeCompare(b.dueDate);
         }),
         overdue: all.filter(q => q.status === STATUS.OVERDUE).sort((a, b) => {
+            // Sort by urgency (critical first), then by date
+            const urgencyOrder = { critical: 0, moderate: 1, low: 2 };
+            const ua = urgencyOrder[a.urgencyLevel] ?? 2;
+            const ub = urgencyOrder[b.urgencyLevel] ?? 2;
+            if (ua !== ub) return ua - ub;
             if (!a.dueDate || !b.dueDate) return 0;
             return a.dueDate.localeCompare(b.dueDate);
         }),
@@ -215,21 +288,25 @@ export async function getQuestsByStatus() {
             return (b.completedAt || '').localeCompare(a.completedAt || '');
         }),
         dormant: all.filter(q => q.status === STATUS.DORMANT),
-        retired: all.filter(q => q.status === STATUS.RETIRED)
+        retired: all.filter(q => q.status === STATUS.RETIRED),
+        snoozed: all.filter(q => q.status === STATUS.SNOOZED).sort((a, b) => {
+            return (a.snoozedUntil || '').localeCompare(b.snoozedUntil || '');
+        })
     };
 }
 
-/**
- * Delete a quest
- */
+// ── Delete ──────────────────────────────────────
 export async function deleteQuest(questId) {
     await db.quests.delete(questId);
+    await emitEvent(EVENT.QUEST_DELETED, questId, {});
 }
 
-/**
- * Save/update a quest
- */
-export async function saveQuest(quest) {
+// ── Save ────────────────────────────────────────
+export async function saveQuest(quest, isNew = false) {
     await db.quests.put(quest);
+    await emitEvent(isNew ? EVENT.QUEST_CREATED : EVENT.QUEST_UPDATED, quest.id, {
+        title: quest.title,
+        status: quest.status
+    });
     return quest;
 }

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════
-   QuestForge — Design System
-   Dark RPG-inspired theme
+   QuestForge — Design System (V2)
+   Dark RPG-inspired theme with urgency & snooze
    ═══════════════════════════════════════════════ */
 
 :root {
@@ -21,6 +21,8 @@
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-orange: #fb923c;
+  --accent-blue: #60a5fa;
+  --accent-pink: #f472b6;
 
   /* Text */
   --text-primary: #e8e6f0;
@@ -33,9 +35,9 @@
   --border-active: rgba(139, 92, 246, 0.4);
 
   /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
-  --shadow-lg: 0 8px 30px rgba(0,0,0,0.6);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.6);
   --shadow-glow-gold: 0 0 20px rgba(232, 184, 75, 0.15);
   --shadow-glow-purple: 0 0 20px rgba(139, 92, 246, 0.15);
 
@@ -55,8 +57,12 @@
 }
 
 /* ── Reset ─────────────────────────────────── */
-*, *::before, *::after {
-  margin: 0; padding: 0; box-sizing: border-box;
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 html {
@@ -73,8 +79,14 @@ body {
 }
 
 /* ── Scrollbar ─────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 ::-webkit-scrollbar-thumb {
   background: var(--text-muted);
   border-radius: 3px;
@@ -202,8 +214,15 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Cards ─────────────────────────────────── */
@@ -236,6 +255,63 @@ body {
 .card.dormant {
   border-left: 3px solid var(--accent-orange);
   opacity: 0.7;
+}
+
+.card.snoozed {
+  border-left: 3px solid var(--accent-cyan);
+  opacity: 0.7;
+}
+
+/* ── Urgency Escalation ───────────────────── */
+.card.urgency-moderate {
+  border-left: 4px solid var(--accent-orange);
+  box-shadow: inset 0 0 20px rgba(251, 146, 60, 0.06);
+}
+
+.card.urgency-critical {
+  border-left: 4px solid var(--accent-red);
+  box-shadow: inset 0 0 20px rgba(248, 113, 113, 0.08);
+  animation: urgencyPulse 2s ease-in-out infinite;
+}
+
+@keyframes urgencyPulse {
+
+  0%,
+  100% {
+    border-left-color: var(--accent-red);
+  }
+
+  50% {
+    border-left-color: rgba(248, 113, 113, 0.5);
+  }
+}
+
+.badge-urgency-moderate {
+  background: rgba(251, 146, 60, 0.2);
+  color: var(--accent-orange);
+}
+
+.badge-urgency-critical {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--accent-red);
+  animation: urgencyBadgePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes urgencyBadgePulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.badge-snoozed {
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--accent-cyan);
 }
 
 /* ── Quest Card Specifics ──────────────────── */
@@ -273,9 +349,42 @@ body {
   letter-spacing: 0.5px;
 }
 
-.badge-difficulty-1 { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
-.badge-difficulty-2 { background: rgba(251, 146, 60, 0.15); color: var(--accent-orange); }
-.badge-difficulty-3 { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+/* ── Difficulty Badges (7 tiers) ──────────── */
+.badge-difficulty-1 {
+  background: rgba(156, 163, 175, 0.15);
+  color: #9ca3af;
+}
+
+.badge-difficulty-2 {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--accent-green);
+}
+
+.badge-difficulty-3 {
+  background: rgba(251, 146, 60, 0.15);
+  color: var(--accent-orange);
+}
+
+.badge-difficulty-4 {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--accent-red);
+}
+
+.badge-difficulty-5 {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--accent-purple);
+}
+
+.badge-difficulty-6 {
+  background: rgba(244, 114, 182, 0.15);
+  color: var(--accent-pink);
+}
+
+.badge-difficulty-7 {
+  background: linear-gradient(135deg, rgba(232, 184, 75, 0.15), rgba(139, 92, 246, 0.15));
+  color: var(--accent-gold);
+  text-shadow: 0 0 8px rgba(232, 184, 75, 0.3);
+}
 
 .badge-category {
   background: rgba(139, 92, 246, 0.12);
@@ -307,6 +416,74 @@ body {
 .quest-due.overdue {
   color: var(--accent-red);
   font-weight: 600;
+}
+
+/* ── Collapse/Expand Toggle ───────────────── */
+.quest-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: var(--transition-fast);
+  line-height: 1;
+}
+
+.quest-toggle:hover {
+  color: var(--accent-gold);
+  background: rgba(232, 184, 75, 0.08);
+}
+
+.collapse-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* ── Completed Timestamp ──────────────────── */
+.completed-timestamp {
+  font-size: 0.75rem;
+  color: var(--accent-green);
+  margin-top: 8px;
+  opacity: 0.8;
+}
+
+.completed-time {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+/* ── Session Cluster ─────────────────────── */
+.session-cluster {
+  border-left: 2px solid rgba(139, 92, 246, 0.3);
+  padding-left: 12px;
+  margin-bottom: 16px;
+}
+
+.session-cluster-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent-purple);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  padding: 4px 0;
+}
+
+/* ── Delta Export Badge ───────────────────── */
+.delta-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--accent-purple);
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 100px;
 }
 
 /* ── Progress Bar ──────────────────────────── */
@@ -582,6 +759,13 @@ body {
   margin-top: 24px;
 }
 
+.form-objective-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
 /* ── XP Float Animation ────────────────────── */
 .xp-float {
   position: fixed;
@@ -596,9 +780,20 @@ body {
 }
 
 @keyframes xpFloat {
-  0% { opacity: 1; transform: translateY(0) scale(1); }
-  70% { opacity: 1; transform: translateY(-60px) scale(1.1); }
-  100% { opacity: 0; transform: translateY(-90px) scale(0.9); }
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  70% {
+    opacity: 1;
+    transform: translateY(-60px) scale(1.1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-90px) scale(0.9);
+  }
 }
 
 /* ── Stats Panel ───────────────────────────── */
@@ -686,8 +881,15 @@ body {
 }
 
 @keyframes spriteFloat {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-4px);
+  }
 }
 
 /* ── Empty States ──────────────────────────── */
@@ -765,5 +967,9 @@ body {
     width: 48px;
     height: 48px;
     font-size: 1.3rem;
+  }
+
+  .collapse-controls {
+    flex-wrap: wrap;
   }
 }

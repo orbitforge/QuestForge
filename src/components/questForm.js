@@ -1,17 +1,11 @@
 /* ═══════════════════════════════════════════════
-   Quest Form Component (Create / Edit Modal)
+   Quest Form Component (V2) — Create / Edit Modal
+   7-tier difficulty, templates, escalation days
    ═══════════════════════════════════════════════ */
 
-import { createQuest, createObjective, RECURRENCE_TYPES, generateId } from '../schema.js';
+import { createQuest, createObjective, RECURRENCE_TYPES, generateId, DIFFICULTY_LABEL, DIFFICULTY_MULTIPLIER, QUEST_TEMPLATES } from '../schema.js';
 import { saveQuest, getOverdueByCategory } from '../engine/questEngine.js';
 
-/**
- * Render quest form inside the modal
- * @param {HTMLElement} container
- * @param {Object|null} quest — null for new quest
- * @param {Function} onSave — callback after save
- * @param {Function} onClose — callback to close modal
- */
 export async function renderQuestForm(container, quest, onSave, onClose) {
   const isEdit = quest !== null;
   const q = quest || createQuest();
@@ -25,9 +19,28 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
     </div>
   `).join('');
 
+  // Build difficulty options
+  const difficultyOptions = Object.entries(DIFFICULTY_LABEL).map(([val, label]) => {
+    const mult = DIFFICULTY_MULTIPLIER[val];
+    return `<option value="${val}" ${q.difficulty === parseInt(val) ? 'selected' : ''}>${'⭐'.repeat(Math.min(parseInt(val), 5))}${parseInt(val) > 5 ? '💎'.repeat(parseInt(val) - 5) : ''} ${label} (${mult}×)</option>`;
+  }).join('');
+
+  // Build template options
+  const templateOptions = Object.entries(QUEST_TEMPLATES).map(([key, tmpl]) =>
+    `<option value="${key}" ${q.template === key ? 'selected' : ''}>${tmpl.title}</option>`
+  ).join('');
+
   container.innerHTML = `
     <h2 class="modal-title">${isEdit ? '✏️ Edit Quest' : '⚔️ New Quest'}</h2>
     <form id="quest-form">
+      ${!isEdit ? `<div class="form-group">
+        <label class="form-label">Template</label>
+        <select class="form-select" id="qf-template">
+          <option value="">— None —</option>
+          ${templateOptions}
+        </select>
+      </div>` : ''}
+
       <div class="form-group">
         <label class="form-label">Title</label>
         <input class="form-input" type="text" id="qf-title" value="${escapeAttr(q.title)}" required />
@@ -46,9 +59,7 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
         <div class="form-group">
           <label class="form-label">Difficulty</label>
           <select class="form-select" id="qf-difficulty">
-            <option value="1" ${q.difficulty === 1 ? 'selected' : ''}>⭐ Easy (1.0×)</option>
-            <option value="2" ${q.difficulty === 2 ? 'selected' : ''}>⭐⭐ Medium (1.3×)</option>
-            <option value="3" ${q.difficulty === 3 ? 'selected' : ''}>⭐⭐⭐ Hard (1.6×)</option>
+            ${difficultyOptions}
           </select>
         </div>
       </div>
@@ -69,9 +80,15 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
         <input class="form-input" type="text" id="qf-tags" value="${escapeAttr(q.tags.join(', '))}" placeholder="focus, sprint, priority" />
       </div>
 
-      <div class="form-group">
-        <label class="form-label">Due Date</label>
-        <input class="form-input" type="date" id="qf-due" value="${q.dueDate ? toDateInput(q.dueDate) : ''}" />
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Due Date</label>
+          <input class="form-input" type="date" id="qf-due" value="${q.dueDate ? toDateInput(q.dueDate) : ''}" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Overdue Escalation Days</label>
+          <input class="form-input" type="number" id="qf-escalation" value="${q.overdueEscalationDays || 3}" min="1" max="30" />
+        </div>
       </div>
 
       <div class="form-group">
@@ -117,17 +134,43 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
     </form>
   `;
 
-  // Check category backlog warning
+  // Template selection (new quests only)
+  if (!isEdit) {
+    const templateSelect = container.querySelector('#qf-template');
+    templateSelect?.addEventListener('change', () => {
+      const key = templateSelect.value;
+      if (!key || !QUEST_TEMPLATES[key]) return;
+      const tmpl = QUEST_TEMPLATES[key];
+      container.querySelector('#qf-title').value = tmpl.title;
+      container.querySelector('#qf-desc').value = tmpl.description;
+      container.querySelector('#qf-category').value = tmpl.category;
+      container.querySelector('#qf-difficulty').value = tmpl.difficulty;
+      container.querySelector('#qf-xpbase').value = tmpl.xpBase;
+      container.querySelector('#qf-xpobj').value = tmpl.xpPerObjective;
+
+      // Replace objectives
+      const objContainer = container.querySelector('#objectives-container');
+      objContainer.innerHTML = '';
+      tmpl.objectives.forEach((text, i) => {
+        const row = document.createElement('div');
+        row.className = 'form-objective-row';
+        row.dataset.objIndex = i;
+        row.innerHTML = `
+                  <input class="form-input obj-text" type="text" value="${escapeAttr(text)}" placeholder="Objective ${i + 1}" />
+                  <button class="btn-icon remove-obj" type="button" title="Remove">×</button>
+                `;
+        objContainer.appendChild(row);
+      });
+      wireRemoveButtons();
+    });
+  }
+
+  // Category backlog warning
   const categoryInput = container.querySelector('#qf-category');
   const warningEl = container.querySelector('#category-warning');
-
   function checkCategoryWarning() {
     const cat = categoryInput.value.trim();
-    if (cat && overdueCategories[cat] >= 2) {
-      warningEl.style.display = 'flex';
-    } else {
-      warningEl.style.display = 'none';
-    }
+    warningEl.style.display = cat && overdueCategories[cat] >= 2 ? 'flex' : 'none';
   }
   categoryInput.addEventListener('input', checkCategoryWarning);
   checkCategoryWarning();
@@ -147,9 +190,9 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
     row.className = 'form-objective-row';
     row.dataset.objIndex = idx;
     row.innerHTML = `
-      <input class="form-input obj-text" type="text" placeholder="Objective ${idx + 1}" />
-      <button class="btn-icon remove-obj" type="button" title="Remove">×</button>
-    `;
+          <input class="form-input obj-text" type="text" placeholder="Objective ${idx + 1}" />
+          <button class="btn-icon remove-obj" type="button" title="Remove">×</button>
+        `;
     objContainer.appendChild(row);
     wireRemoveButtons();
   });
@@ -161,7 +204,6 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
   }
   wireRemoveButtons();
 
-  // Cancel
   container.querySelector('#qf-cancel').addEventListener('click', onClose);
 
   // Submit
@@ -172,7 +214,6 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
     objContainer.querySelectorAll('.obj-text').forEach((input, i) => {
       const text = input.value.trim();
       if (text) {
-        // Preserve existing objective IDs and completion state if editing
         if (isEdit && q.objectives[i]) {
           objectives.push({ ...q.objectives[i], text });
         } else {
@@ -183,7 +224,6 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
 
     const tagsRaw = container.querySelector('#qf-tags').value;
     const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-
     const dueVal = container.querySelector('#qf-due').value;
 
     let recurringRule = null;
@@ -194,6 +234,8 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
       };
     }
 
+    const templateKey = !isEdit ? (container.querySelector('#qf-template')?.value || null) : q.template;
+
     const updatedQuest = {
       ...q,
       title: container.querySelector('#qf-title').value.trim(),
@@ -203,16 +245,18 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
       difficulty: parseInt(container.querySelector('#qf-difficulty').value),
       xpBase: parseInt(container.querySelector('#qf-xpbase').value) || 50,
       xpPerObjective: parseInt(container.querySelector('#qf-xpobj').value) || 10,
+      overdueEscalationDays: parseInt(container.querySelector('#qf-escalation').value) || 3,
       objectives,
       dueDate: dueVal ? dateToEndOfDay(dueVal) : null,
-      recurringRule
+      recurringRule,
+      template: templateKey
     };
 
     if (!isEdit) {
       updatedQuest.lastProgressAt = new Date().toISOString();
     }
 
-    await saveQuest(updatedQuest);
+    await saveQuest(updatedQuest, !isEdit);
     onSave(updatedQuest);
   });
 }
@@ -228,8 +272,6 @@ function toDateInput(isoStr) {
 }
 
 function dateToEndOfDay(dateStr) {
-  // dateStr is YYYY-MM-DD from the date picker
-  // Default to 23:59 local time
   const d = new Date(`${dateStr}T23:59:00`);
   return d.toISOString();
 }

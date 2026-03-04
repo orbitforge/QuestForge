@@ -1,10 +1,11 @@
 /* ═══════════════════════════════════════════════
-   Momentum Engine
+   Momentum Engine (V2)
    60-min window, +10% per chain, +20% max
    ═══════════════════════════════════════════════ */
 
 import db from '../db.js';
-import { MOMENTUM_DURATION_MS, MOMENTUM_BONUS_INCREMENT, MOMENTUM_BONUS_MAX } from '../schema.js';
+import { MOMENTUM_DURATION_MS, MOMENTUM_BONUS_INCREMENT, MOMENTUM_BONUS_MAX, EVENT } from '../schema.js';
+import { emitEvent } from './eventBus.js';
 
 const MOMENTUM_KEY = 'momentum';
 
@@ -21,7 +22,6 @@ export async function getMomentumState() {
     const remainingMs = MOMENTUM_DURATION_MS - elapsed;
 
     if (remainingMs <= 0) {
-        // Expired — clean up
         await db.appState.delete(MOMENTUM_KEY);
         return { active: false, remainingMs: 0, currentBonus: 0 };
     }
@@ -38,38 +38,39 @@ export async function getMomentumState() {
  * Start or extend momentum on qualifying quest completion
  * Returns the bonus that should be applied to this completion
  */
-export async function applyMomentum() {
+export async function applyMomentum(questId) {
     const state = await getMomentumState();
     let bonusForThis = 0;
     let newBonus = 0;
 
     if (state.active) {
-        // Chain continues — award current bonus, increment for next
-        // Guard: clamp bonus to never exceed max cap
         bonusForThis = Math.min(state.currentBonus, MOMENTUM_BONUS_MAX);
         newBonus = Math.min(state.currentBonus + MOMENTUM_BONUS_INCREMENT, MOMENTUM_BONUS_MAX);
     } else {
-        // First qualifying completion — no bonus yet, start window
         bonusForThis = 0;
         newBonus = MOMENTUM_BONUS_INCREMENT;
     }
 
-    // Guard: clamp newBonus to prevent any possibility of infinite stacking
     newBonus = Math.min(newBonus, MOMENTUM_BONUS_MAX);
 
-    // Reset / start timer
     await db.appState.put({
         key: MOMENTUM_KEY,
         startedAt: Date.now(),
         currentBonus: newBonus
     });
 
-    // Final guard: ensure returned bonus is capped
-    return Math.min(bonusForThis, MOMENTUM_BONUS_MAX);
+    const cappedBonus = Math.min(bonusForThis, MOMENTUM_BONUS_MAX);
+
+    // Emit momentum event
+    if (cappedBonus > 0) {
+        await emitEvent(EVENT.MOMENTUM_APPLIED, questId, { bonus: cappedBonus });
+    }
+
+    return cappedBonus;
 }
 
 /**
- * Format remaining ms to HH:MM
+ * Format remaining ms to MM:SS
  */
 export function formatMomentumTimer(ms) {
     if (ms <= 0) return '00:00';
