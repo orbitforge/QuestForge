@@ -386,6 +386,29 @@ body {
   text-shadow: 0 0 8px rgba(232, 184, 75, 0.3);
 }
 
+/* ── Priority Badges (1-4) ──────────────────── */
+.badge-priority-1 {
+  background: rgba(156, 163, 175, 0.15);
+  color: #9ca3af;
+}
+
+.badge-priority-2 {
+  background: rgba(96, 165, 250, 0.15);
+  color: var(--accent-blue);
+}
+
+.badge-priority-3 {
+  background: rgba(251, 146, 60, 0.15);
+  color: var(--accent-orange);
+}
+
+.badge-priority-4 {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--accent-red);
+  font-weight: 800;
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.1);
+}
+
 .badge-category {
   background: rgba(139, 92, 246, 0.12);
   color: var(--accent-purple);
@@ -436,10 +459,44 @@ body {
   background: rgba(232, 184, 75, 0.08);
 }
 
+.view-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
 .collapse-controls {
   display: flex;
   gap: 8px;
-  margin-bottom: 16px;
+}
+
+.sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sort-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sort-select {
+  padding: 4px 28px 4px 10px;
+  font-size: 0.8rem;
+  background-position: right 8px center;
+  width: auto;
+  min-width: 120px;
 }
 
 /* ── Completed Timestamp ──────────────────── */
@@ -748,7 +805,7 @@ body {
 
 .form-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
 }
 

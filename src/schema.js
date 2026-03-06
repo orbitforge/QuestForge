@@ -17,12 +17,36 @@ export const URGENCY = {
     CRITICAL: 'critical'
 };
 
+export const PRIORITY = {
+    LOW: 1,
+    MEDIUM: 2,
+    HIGH: 3,
+    CRITICAL: 4
+};
+
+export const PRIORITY_LABEL = {
+    1: 'Low',
+    2: 'Medium',
+    3: 'High',
+    4: 'Critical'
+};
+
 export const SNOOZE_TYPE = {
     SOFT: 'soft',
     HARD: 'hard'
 };
 
-// ── Difficulty Tiers (V2 — nonlinear scaling) ───
+/**
+ * Difficulty Tiers (V2 — nonlinear scaling)
+ * Option A (Canonical): Store multiplier and label per quest to ensure XP stability.
+ * 1: Trivial   (0.8x)
+ * 2: Easy      (1.0x)
+ * 3: Medium    (1.3x)
+ * 4: Hard      (1.7x)
+ * 5: Expert    (2.2x)
+ * 6: Master    (2.8x)
+ * 7: Legendary (3.5x)
+ */
 export const DIFFICULTY_MULTIPLIER = {
     1: 0.8,
     2: 1.0,
@@ -154,6 +178,78 @@ export const QUEST_TEMPLATES = {
 };
 
 /**
+ * Normalize recurrence rule to prevent per-character serialization
+ * Rules must be either a string (e.g. "daily") or a structured object (e.g. {type:"daily"})
+ */
+export function normalizeRecurrenceRule(rule) {
+    if (!rule) return null;
+
+    // Handle string format (Option A)
+    if (typeof rule === 'string') {
+        const trimmed = rule.trim().toLowerCase();
+        return RECURRENCE_TYPES.includes(trimmed) ? trimmed : null;
+    }
+
+    // Handle character-map corruption (e.g. {0:"d", 1:"a"...})
+    // If it has numerical keys like 0, 1, 2 but no 'type' property, it's likely corrupt
+    if (typeof rule === 'object' && !rule.type && (rule[0] !== undefined || Object.keys(rule).every(k => !isNaN(k)))) {
+        const str = Object.values(rule).join('');
+        const trimmed = str.trim().toLowerCase();
+        return RECURRENCE_TYPES.includes(trimmed) ? trimmed : null;
+    }
+
+    // Handle object format (Option B)
+    if (typeof rule === 'object' && rule.type) {
+        return {
+            type: String(rule.type).trim().toLowerCase(),
+            interval: parseInt(rule.interval) || 1,
+            daysOfWeek: Array.isArray(rule.daysOfWeek) ? rule.daysOfWeek : undefined,
+            dayOfMonth: typeof rule.dayOfMonth === 'number' ? rule.dayOfMonth : undefined
+        };
+    }
+
+    return null;
+}
+
+/**
+ * Normalize a date to YYYY-MM-DD (Option A)
+ * Canonical format for due dates to avoid timezone/time-of-day drift.
+ */
+export function normalizeDueDate(dateVal) {
+    if (!dateVal) return null;
+    try {
+        const d = new Date(dateVal);
+        if (isNaN(d.getTime())) return null;
+        // Use ISO string to get canonical UTC date part
+        return d.toISOString().split('T')[0];
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Normalize a date to Full ISO Timestamp (Option B)
+ * Used for operational timestamps (completedAt, lastProgressAt).
+ */
+export function normalizeTimestamp(dateVal) {
+    if (!dateVal) return null;
+    try {
+        const d = new Date(dateVal);
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString();
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * @deprecated Use normalizeDueDate or normalizeTimestamp
+ */
+export function normalizeDate(dateVal) {
+    return normalizeDueDate(dateVal);
+}
+
+/**
  * Generate a unique ID
  */
 export function generateId() {
@@ -164,13 +260,19 @@ export function generateId() {
  * Create a new quest object with V2 defaults
  */
 export function createQuest(overrides = {}) {
+    const tier = overrides.difficultyTier !== undefined ? overrides.difficultyTier : (overrides.difficulty !== undefined ? overrides.difficulty : 2);
+    const label = overrides.difficultyLabel || DIFFICULTY_LABEL[tier] || 'Unknown';
+    const multiplier = overrides.difficultyMultiplier !== undefined ? overrides.difficultyMultiplier : (DIFFICULTY_MULTIPLIER[tier] || 1.0);
+
     return {
         id: generateId(),
         title: '',
         description: '',
         category: '',
         tags: [],
-        difficulty: 2,
+        difficultyTier: tier,
+        difficultyLabel: label,
+        difficultyMultiplier: multiplier,
         xpBase: 50,
         xpPerObjective: 10,
         objectives: [],
@@ -179,15 +281,18 @@ export function createQuest(overrides = {}) {
         overdueThresholdDays: null,
         overdueEscalationDays: null,
         urgencyLevel: URGENCY.LOW,
+        priority: overrides.priority || PRIORITY.MEDIUM,
         snoozedUntil: null,
         snoozeType: null,
         recurringRule: null,
         template: null,
-        createdAt: new Date().toISOString(),
-        completedAt: null,
-        lastProgressAt: new Date().toISOString(),
+        createdAt: normalizeTimestamp(overrides.createdAt || new Date()),
+        completedAt: normalizeTimestamp(overrides.completedAt || null),
+        lastProgressAt: normalizeTimestamp(overrides.lastProgressAt || new Date()),
         _recurrenceProcessed: false,
-        ...overrides
+        ...overrides,
+        dueDate: normalizeDueDate(overrides.dueDate),
+        recurringRule: normalizeRecurrenceRule(overrides.recurringRule || null)
     };
 }
 
@@ -211,7 +316,8 @@ export function createLegendEntry(quest, xpEarned, momentumBonusApplied) {
         questId: quest.id,
         title: quest.title,
         category: quest.category,
-        difficulty: quest.difficulty,
+        difficultyTier: quest.difficultyTier || quest.difficulty,
+        difficultyLabel: quest.difficultyLabel || DIFFICULTY_LABEL[quest.difficultyTier || quest.difficulty] || 'Unknown',
         xpEarned,
         completedAt: new Date().toISOString(),
         momentumBonusApplied
@@ -228,6 +334,6 @@ export function createEvent(type, questId, payload = {}) {
         questId: questId || null,
         timestamp: new Date().toISOString(),
         payload,
-        exported: false
+        exported: 0
     };
 }

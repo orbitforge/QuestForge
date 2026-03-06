@@ -3,7 +3,7 @@
    Completion-spawn only, no stacking
    ═══════════════════════════════════════════════ */
 
-import { createQuest, generateId, createObjective, STATUS, EVENT } from '../schema.js';
+import { createQuest, generateId, createObjective, STATUS, EVENT, normalizeRecurrenceRule, normalizeDueDate, normalizeTimestamp } from '../schema.js';
 import { emitEvent } from './eventBus.js';
 import db from '../db.js';
 
@@ -14,19 +14,22 @@ function calculateNextDueDate(completedDate, rule) {
     const base = new Date(completedDate);
     const next = new Date(base);
 
-    switch (rule.type) {
+    const normalizedRule = typeof rule === 'string' ? { type: rule } : rule;
+    if (!normalizedRule || !normalizedRule.type) return base.toISOString();
+
+    switch (normalizedRule.type) {
         case 'daily':
-            next.setDate(next.getDate() + (rule.interval || 1));
+            next.setDate(next.getDate() + (normalizedRule.interval || 1));
             break;
 
         case 'weekly': {
-            const interval = rule.interval || 1;
-            if (rule.daysOfWeek && rule.daysOfWeek.length > 0) {
+            const interval = normalizedRule.interval || 1;
+            if (normalizedRule.daysOfWeek && normalizedRule.daysOfWeek.length > 0) {
                 let found = false;
                 for (let i = 1; i <= 7 * interval; i++) {
                     const candidate = new Date(base);
                     candidate.setDate(candidate.getDate() + i);
-                    if (rule.daysOfWeek.includes(candidate.getDay())) {
+                    if (normalizedRule.daysOfWeek.includes(candidate.getDay())) {
                         next.setTime(candidate.getTime());
                         found = true;
                         break;
@@ -42,17 +45,35 @@ function calculateNextDueDate(completedDate, rule) {
         }
 
         case 'monthly': {
-            const interval = rule.interval || 1;
+            const interval = normalizedRule.interval || 1;
             next.setMonth(next.getMonth() + interval);
-            if (rule.dayOfMonth) {
+            if (normalizedRule.dayOfMonth) {
                 const maxDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-                next.setDate(Math.min(rule.dayOfMonth, maxDay));
+                next.setDate(Math.min(normalizedRule.dayOfMonth, maxDay));
             }
             break;
         }
     }
 
-    return next.toISOString();
+    return normalizeDueDate(next);
+}
+
+/**
+ * Normalize all recurrence rules in the database (migration helper)
+ */
+export async function normalizeAllRecurrenceRules() {
+    const quests = await db.quests.toArray();
+    const toUpdate = quests.filter(q => {
+        const normalized = normalizeRecurrenceRule(q.recurringRule);
+        return JSON.stringify(q.recurringRule) !== JSON.stringify(normalized);
+    });
+
+    if (toUpdate.length === 0) return;
+
+    await db.quests.bulkPut(toUpdate.map(q => ({
+        ...q,
+        recurringRule: normalizeRecurrenceRule(q.recurringRule)
+    })));
 }
 
 /**
@@ -71,7 +92,7 @@ export async function spawnNextInstance(quest) {
 
     if (existing) return null;
 
-    const now = new Date().toISOString();
+    const now = normalizeTimestamp(new Date());
     const nextDue = calculateNextDueDate(now, quest.recurringRule);
 
     // Deep clone structure ONLY — force-reset ALL completion state
@@ -80,14 +101,16 @@ export async function spawnNextInstance(quest) {
         description: quest.description,
         category: quest.category,
         tags: [...quest.tags],
-        difficulty: quest.difficulty,
+        difficultyTier: quest.difficultyTier || quest.difficulty,
+        difficultyLabel: quest.difficultyLabel,
+        difficultyMultiplier: quest.difficultyMultiplier,
         xpBase: quest.xpBase,
         xpPerObjective: quest.xpPerObjective,
         objectives: quest.objectives.map(o => createObjective(o.text)),
         dueDate: nextDue,
         overdueThresholdDays: quest.overdueThresholdDays,
         overdueEscalationDays: quest.overdueEscalationDays,
-        recurringRule: { ...quest.recurringRule },
+        recurringRule: normalizeRecurrenceRule(quest.recurringRule),
         template: quest.template,
         // Explicit state resets
         status: STATUS.ACTIVE,

@@ -3,7 +3,7 @@
    7-tier difficulty, templates, escalation days
    ═══════════════════════════════════════════════ */
 
-import { createQuest, createObjective, RECURRENCE_TYPES, generateId, DIFFICULTY_LABEL, DIFFICULTY_MULTIPLIER, QUEST_TEMPLATES } from '../schema.js';
+import { createQuest, createObjective, RECURRENCE_TYPES, generateId, DIFFICULTY_LABEL, DIFFICULTY_MULTIPLIER, QUEST_TEMPLATES, normalizeDueDate, PRIORITY, PRIORITY_LABEL } from '../schema.js';
 import { saveQuest, getOverdueByCategory } from '../engine/questEngine.js';
 
 export async function renderQuestForm(container, quest, onSave, onClose) {
@@ -20,10 +20,16 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
   `).join('');
 
   // Build difficulty options
+  const currentTier = q.difficultyTier !== undefined ? q.difficultyTier : (q.difficulty || 2);
   const difficultyOptions = Object.entries(DIFFICULTY_LABEL).map(([val, label]) => {
     const mult = DIFFICULTY_MULTIPLIER[val];
-    return `<option value="${val}" ${q.difficulty === parseInt(val) ? 'selected' : ''}>${'⭐'.repeat(Math.min(parseInt(val), 5))}${parseInt(val) > 5 ? '💎'.repeat(parseInt(val) - 5) : ''} ${label} (${mult}×)</option>`;
+    return `<option value="${val}" ${currentTier === parseInt(val) ? 'selected' : ''}>${'⭐'.repeat(Math.min(parseInt(val), 5))}${parseInt(val) > 5 ? '💎'.repeat(parseInt(val) - 5) : ''} ${label} (${mult}×)</option>`;
   }).join('');
+
+  // Build priority options
+  const priorityOptions = Object.entries(PRIORITY_LABEL).map(([val, label]) =>
+    `<option value="${val}" ${q.priority === parseInt(val) ? 'selected' : ''}>${label}</option>`
+  ).join('');
 
   // Build template options
   const templateOptions = Object.entries(QUEST_TEMPLATES).map(([key, tmpl]) =>
@@ -60,6 +66,12 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
           <label class="form-label">Difficulty</label>
           <select class="form-select" id="qf-difficulty">
             ${difficultyOptions}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Priority</label>
+          <select class="form-select" id="qf-priority">
+            ${priorityOptions}
           </select>
         </div>
       </div>
@@ -144,7 +156,7 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
       container.querySelector('#qf-title').value = tmpl.title;
       container.querySelector('#qf-desc').value = tmpl.description;
       container.querySelector('#qf-category').value = tmpl.category;
-      container.querySelector('#qf-difficulty').value = tmpl.difficulty;
+      container.querySelector('#qf-difficulty').value = tmpl.difficulty; // Template uses 'difficulty' as tier
       container.querySelector('#qf-xpbase').value = tmpl.xpBase;
       container.querySelector('#qf-xpobj').value = tmpl.xpPerObjective;
 
@@ -242,12 +254,15 @@ export async function renderQuestForm(container, quest, onSave, onClose) {
       description: container.querySelector('#qf-desc').value.trim(),
       category: container.querySelector('#qf-category').value.trim(),
       tags,
-      difficulty: parseInt(container.querySelector('#qf-difficulty').value),
+      difficultyTier: parseInt(container.querySelector('#qf-difficulty').value),
+      difficultyLabel: DIFFICULTY_LABEL[parseInt(container.querySelector('#qf-difficulty').value)],
+      difficultyMultiplier: DIFFICULTY_MULTIPLIER[parseInt(container.querySelector('#qf-difficulty').value)],
+      priority: parseInt(container.querySelector('#qf-priority').value),
       xpBase: parseInt(container.querySelector('#qf-xpbase').value) || 50,
       xpPerObjective: parseInt(container.querySelector('#qf-xpobj').value) || 10,
       overdueEscalationDays: parseInt(container.querySelector('#qf-escalation').value) || 3,
       objectives,
-      dueDate: dueVal ? dateToEndOfDay(dueVal) : null,
+      dueDate: normalizeDueDate(dueVal),
       recurringRule,
       template: templateKey
     };
@@ -265,13 +280,9 @@ function escapeAttr(str) {
   return (str || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-function toDateInput(isoStr) {
-  const d = new Date(isoStr);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function dateToEndOfDay(dateStr) {
-  const d = new Date(`${dateStr}T23:59:00`);
-  return d.toISOString();
+function toDateInput(dateStr) {
+  if (!dateStr) return '';
+  // Since dateStr is now canonical YYYY-MM-DD, we can return it directly
+  // or double-check with normalizeDueDate if needed.
+  return normalizeDueDate(dateStr) || '';
 }

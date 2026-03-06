@@ -11,7 +11,8 @@ import db from '../db.js';
  */
 export function calculateXP(quest, momentumBonus = 0) {
     const base = quest.xpBase + (quest.xpPerObjective * quest.objectives.length);
-    const multiplier = DIFFICULTY_MULTIPLIER[quest.difficulty] || 1.0;
+    // Use stored multiplier if available (Option A); fallback to global constant (Option B)
+    const multiplier = quest.difficultyMultiplier !== undefined ? quest.difficultyMultiplier : (DIFFICULTY_MULTIPLIER[quest.difficultyTier || quest.difficulty || 2] || 1.0);
     // Overdue redemption bonus: +15% for clearing an overdue quest
     const overdueBonus = quest.urgencyLevel && quest.urgencyLevel !== 'low' ? OVERDUE_REDEMPTION_BONUS : 0;
     return Math.round(base * multiplier * (1 + momentumBonus) * (1 + overdueBonus));

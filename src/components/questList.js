@@ -3,12 +3,13 @@
    Collapsible cards, urgency indicators, snooze
    ═══════════════════════════════════════════════ */
 
-import { STATUS, DIFFICULTY_LABEL, URGENCY, SESSION_CLUSTER_WINDOW_MS } from '../schema.js';
+import { STATUS, DIFFICULTY_LABEL, URGENCY, SESSION_CLUSTER_WINDOW_MS, normalizeTimestamp, PRIORITY_LABEL } from '../schema.js';
 import { getQuestsByStatus, toggleObjective, retireQuest, deleteQuest, getOverdueByCategory, snoozeQuest } from '../engine/questEngine.js';
 import db from '../db.js';
 
 let expandedQuests = new Set();
 let globalCollapse = true;
+let sortPref = { field: 'dueDate', order: 'asc' };
 
 /**
  * Load UI state from DB
@@ -18,6 +19,7 @@ async function loadUIState() {
   if (state) {
     expandedQuests = new Set(state.expandedQuests || []);
     globalCollapse = state.globalCollapse !== undefined ? state.globalCollapse : true;
+    sortPref = state.sortPref || { field: 'dueDate', order: 'asc' };
   }
 }
 
@@ -25,7 +27,8 @@ async function saveUIState() {
   await db.appState.put({
     key: 'uiState',
     expandedQuests: [...expandedQuests],
-    globalCollapse
+    globalCollapse,
+    sortPref
   });
 }
 
@@ -34,18 +37,78 @@ function isExpanded(questId) {
   return !expandedQuests.has(questId); // inverted: set tracks collapsed
 }
 
+function sortQuests(quests, { field, order }) {
+  const isAsc = order === 'asc';
+  return [...quests].sort((a, b) => {
+    let valA, valB;
+
+    switch (field) {
+      case 'priority':
+        valA = a.priority ?? 2;
+        valB = b.priority ?? 2;
+        break;
+      case 'dueDate':
+        valA = a.dueDate || '9999-12-31';
+        valB = b.dueDate || '9999-12-31';
+        break;
+      case 'difficulty':
+        valA = a.difficultyTier ?? (a.difficulty ?? 2);
+        valB = b.difficultyTier ?? (b.difficulty ?? 2);
+        break;
+      case 'category':
+        valA = (a.category || '').toLowerCase();
+        valB = (b.category || '').toLowerCase();
+        break;
+      case 'createdAt':
+        valA = a.createdAt || '';
+        valB = b.createdAt || '';
+        break;
+      default:
+        return 0;
+    }
+
+    if (valA < valB) return isAsc ? -1 : 1;
+    if (valA > valB) return isAsc ? 1 : -1;
+    return 0;
+  });
+}
+
 export async function renderQuestList(container, onEdit, onRefresh) {
   await loadUIState();
   const groups = await getQuestsByStatus();
   const overdueCategories = await getOverdueByCategory();
 
+  // Apply User Sorting to Active and Overdue (Completed & Snoozed keep their canonical sorts)
+  groups.active = sortQuests(groups.active, sortPref);
+  // Overdue: sort by user choice, but maybe keep urgency as primary?
+  // Let's stick to user choice for Overdue as well for maximum flexibility
+  groups.overdue = sortQuests(groups.overdue, sortPref);
+
   let html = '';
 
-  // Global collapse controls
-  html += `<div class="collapse-controls">
-      <button class="btn btn-outline btn-sm" id="collapse-all-btn">▶ Collapse All</button>
-      <button class="btn btn-outline btn-sm" id="expand-all-btn">▼ Expand All</button>
-    </div>`;
+  // View Controls (Collapse & Sort)
+  html += `
+    <div class="view-controls">
+      <div class="collapse-controls">
+        <button class="btn btn-outline btn-sm" id="collapse-all-btn">▶ Collapse All</button>
+        <button class="btn btn-outline btn-sm" id="expand-all-btn">▼ Expand All</button>
+      </div>
+
+      <div class="sort-controls">
+        <label class="sort-label">Sort by:</label>
+        <select class="form-select sort-select" id="sort-field-select">
+          <option value="priority" ${sortPref.field === 'priority' ? 'selected' : ''}>Priority</option>
+          <option value="dueDate" ${sortPref.field === 'dueDate' ? 'selected' : ''}>Due Date</option>
+          <option value="difficulty" ${sortPref.field === 'difficulty' ? 'selected' : ''}>Difficulty</option>
+          <option value="category" ${sortPref.field === 'category' ? 'selected' : ''}>Category</option>
+          <option value="createdAt" ${sortPref.field === 'createdAt' ? 'selected' : ''}>Date Created</option>
+        </select>
+        <button class="btn btn-outline btn-sm" id="sort-order-toggle" title="Toggle Asc/Desc">
+          ${sortPref.order === 'asc' ? '↑' : '↓'}
+        </button>
+      </div>
+    </div>
+  `;
 
   // Overdue quests (sorted by urgency)
   if (groups.overdue.length > 0) {
@@ -120,6 +183,18 @@ export async function renderQuestList(container, onEdit, onRefresh) {
     onRefresh();
   });
 
+  // Sort controls
+  container.querySelector('#sort-field-select')?.addEventListener('change', async (e) => {
+    sortPref.field = e.target.value;
+    await saveUIState();
+    onRefresh();
+  });
+  container.querySelector('#sort-order-toggle')?.addEventListener('click', async () => {
+    sortPref.order = sortPref.order === 'asc' ? 'desc' : 'asc';
+    await saveUIState();
+    onRefresh();
+  });
+
   // Toggle expand/collapse per quest
   container.querySelectorAll('.quest-toggle').forEach(el => {
     el.addEventListener('click', async () => {
@@ -176,7 +251,7 @@ export async function renderQuestList(container, onEdit, onRefresh) {
       const until = new Date();
       until.setDate(until.getDate() + 1);
       until.setHours(23, 59, 0, 0);
-      await snoozeQuest(questId, until.toISOString(), snoozeType);
+      await snoozeQuest(questId, normalizeTimestamp(until), snoozeType);
       onRefresh();
     });
   });
@@ -203,8 +278,10 @@ function renderQuestCard(quest, overdueCategories) {
 
   let dueDateHtml = '';
   if (quest.dueDate) {
-    const dueDate = new Date(quest.dueDate);
-    const formatted = dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    // Parse YYYY-MM-DD manually to avoid timezone shift
+    const [y, m, d] = quest.dueDate.split('-').map(Number);
+    const dueDateObj = new Date(y, m - 1, d);
+    const formatted = dueDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const dueClass = isOverdue ? 'quest-due overdue' : 'quest-due';
     dueDateHtml = `<span class="${dueClass}">📅 ${formatted}</span>`;
   }
@@ -281,7 +358,8 @@ function renderQuestCard(quest, overdueCategories) {
         ${dueDateHtml}
       </div>
       <div class="quest-meta">
-        <span class="badge badge-difficulty-${quest.difficulty}">${DIFFICULTY_LABEL[quest.difficulty] || 'Tier ' + quest.difficulty}</span>
+        <span class="badge badge-difficulty-${quest.difficultyTier || quest.difficulty || 2}">${quest.difficultyLabel || DIFFICULTY_LABEL[quest.difficultyTier || quest.difficulty || 2] || 'Unknown'}</span>
+        <span class="badge badge-priority-${quest.priority || 2}">${PRIORITY_LABEL[quest.priority || 2]}</span>
         ${quest.category ? `<span class="badge badge-category">${escapeHtml(quest.category)}</span>` : ''}
         ${tagsHtml}
         ${recurBadge}

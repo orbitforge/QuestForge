@@ -6,7 +6,7 @@ import db from '../db.js';
 import {
     STATUS, URGENCY, SNOOZE_TYPE,
     DORMANCY_THRESHOLD_DAYS, DEFAULT_OVERDUE_THRESHOLD_DAYS, DEFAULT_ESCALATION_DAYS,
-    EVENT, createLegendEntry
+    EVENT, createLegendEntry, normalizeDueDate, normalizeTimestamp
 } from '../schema.js';
 import { calculateXP } from './xpEngine.js';
 import { applyMomentum } from './momentumEngine.js';
@@ -32,7 +32,12 @@ export async function toggleObjective(questId, objectiveId) {
     }
 
     await db.quests.put(quest);
-    await emitEvent(EVENT.OBJECTIVE_TOGGLED, questId, { objectiveId, completed: obj.completed });
+    await emitEvent(EVENT.OBJECTIVE_TOGGLED, questId, {
+        objectiveId,
+        completed: obj.completed,
+        questStatus: quest.status,
+        objectives: quest.objectives.map(o => ({ id: o.id, text: o.text, completed: !!o.completed }))
+    });
 
     // Check if all objectives are now complete
     const allComplete = quest.objectives.length > 0 && quest.objectives.every(o => o.completed);
@@ -58,7 +63,8 @@ export async function completeQuest(questId) {
     // Check momentum (difficulty >= 2 qualifies)
     let momentumBonus = 0;
     let momentumBonusApplied = false;
-    if (quest.difficulty >= 2) {
+    const tier = quest.difficultyTier !== undefined ? quest.difficultyTier : (quest.difficulty || 2);
+    if (tier >= 2) {
         momentumBonus = await applyMomentum(questId);
         momentumBonusApplied = momentumBonus > 0;
     }
@@ -85,7 +91,12 @@ export async function completeQuest(questId) {
     }
 
     // Emit events
-    await emitEvent(EVENT.QUEST_COMPLETED, questId, { xpEarned, momentumBonusApplied });
+    await emitEvent(EVENT.QUEST_COMPLETED, questId, {
+        xpEarned,
+        momentumBonusApplied,
+        questStatus: quest.status,
+        objectives: quest.objectives.map(o => ({ id: o.id, text: o.text, completed: !!o.completed }))
+    });
     await emitEvent(EVENT.XP_AWARDED, questId, { xp: xpEarned });
 
     // Handle recurrence
@@ -118,13 +129,18 @@ export async function checkOverdue() {
         }
 
         const thresholdDays = quest.overdueThresholdDays ?? DEFAULT_OVERDUE_THRESHOLD_DAYS;
-        const dueDate = new Date(quest.dueDate);
-        const overdueDate = new Date(dueDate);
+
+        // Parse dueDate as YYYY-MM-DD and set to end of day (23:59:59.999) 
+        // to ensure they have the full day to complete it.
+        const [y, m, d] = quest.dueDate.split('-').map(Number);
+        const dueDateObj = new Date(y, m - 1, d, 23, 59, 59, 999);
+
+        const overdueDate = new Date(dueDateObj);
         overdueDate.setDate(overdueDate.getDate() + thresholdDays);
 
         if (now > overdueDate) {
             // Calculate urgency escalation
-            const daysPastDue = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
+            const daysPastDue = Math.floor((now - dueDateObj) / (1000 * 60 * 60 * 24));
             const escalationDays = quest.overdueEscalationDays ?? DEFAULT_ESCALATION_DAYS;
             let newUrgency = URGENCY.LOW;
 
@@ -301,12 +317,31 @@ export async function deleteQuest(questId) {
     await emitEvent(EVENT.QUEST_DELETED, questId, {});
 }
 
+// ── Migration ───────────────────────────────────
+export async function normalizeAllDates() {
+    const quests = await db.quests.toArray();
+    const toUpdate = quests.filter(q => {
+        const normalized = normalizeDueDate(q.dueDate);
+        return q.dueDate !== normalized;
+    });
+
+    if (toUpdate.length === 0) return;
+
+    await db.quests.bulkPut(toUpdate.map(q => ({
+        ...q,
+        dueDate: normalizeDueDate(q.dueDate)
+    })));
+}
+
 // ── Save ────────────────────────────────────────
 export async function saveQuest(quest, isNew = false) {
+    quest.dueDate = normalizeDueDate(quest.dueDate);
+    quest.lastProgressAt = normalizeTimestamp(quest.lastProgressAt);
     await db.quests.put(quest);
     await emitEvent(isNew ? EVENT.QUEST_CREATED : EVENT.QUEST_UPDATED, quest.id, {
         title: quest.title,
-        status: quest.status
+        status: quest.status,
+        objectives: (quest.objectives || []).map(o => ({ id: o.id, text: o.text, completed: !!o.completed }))
     });
     return quest;
 }

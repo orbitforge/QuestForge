@@ -3,10 +3,11 @@
    ═══════════════════════════════════════════════ */
 
 import db from '../db.js';
-import { generateId, STATUS, createObjective } from '../schema.js';
+import { generateId, STATUS, createObjective, normalizeRecurrenceRule, normalizeDueDate, normalizeTimestamp, DIFFICULTY_LABEL, DIFFICULTY_MULTIPLIER, PRIORITY } from '../schema.js';
 
 const VALID_STATUSES = new Set(Object.values(STATUS));
-const VALID_DIFFICULTIES = new Set([1, 2, 3]);
+const VALID_DIFFICULTIES = new Set([1, 2, 3, 4, 5, 6, 7]);
+const VALID_PRIORITIES = new Set([1, 2, 3, 4]);
 
 /**
  * Render import modal content
@@ -86,8 +87,11 @@ export function renderImportModal(container, onImported, onClose) {
             if (!q.title || typeof q.title !== 'string') {
                 errors.push(`${label}: Missing or invalid "title" (string required)`);
             }
-            if (q.difficulty !== undefined && !VALID_DIFFICULTIES.has(q.difficulty)) {
-                errors.push(`${label}: "difficulty" must be 1, 2, or 3`);
+            if (q.difficulty !== undefined && !VALID_DIFFICULTIES.has(parseInt(q.difficulty))) {
+                errors.push(`${label}: "difficulty" must be between 1 and 7`);
+            }
+            if (q.priority !== undefined && !VALID_PRIORITIES.has(parseInt(q.priority))) {
+                errors.push(`${label}: "priority" must be 1, 2, 3, or 4`);
             }
             if (q.status !== undefined && !VALID_STATUSES.has(q.status)) {
                 errors.push(`${label}: Invalid "status"`);
@@ -148,24 +152,30 @@ export function renderImportModal(container, onImported, onClose) {
  * Normalize a quest object — fill missing defaults
  */
 function normalizeQuest(q) {
-    const now = new Date().toISOString();
+    const now = normalizeTimestamp(new Date());
+    const tier = q.difficultyTier || q.difficulty || 1;
+    const validatedTier = VALID_DIFFICULTIES.has(tier) ? tier : (VALID_DIFFICULTIES.has(parseInt(tier)) ? parseInt(tier) : 1);
+
     return {
         id: q.id || generateId(),
         title: q.title || 'Untitled Quest',
         description: q.description || '',
         category: q.category || '',
         tags: Array.isArray(q.tags) ? q.tags : [],
-        difficulty: VALID_DIFFICULTIES.has(q.difficulty) ? q.difficulty : 1,
+        difficultyTier: validatedTier,
+        difficultyLabel: q.difficultyLabel || DIFFICULTY_LABEL[validatedTier] || 'Unknown',
+        difficultyMultiplier: q.difficultyMultiplier !== undefined ? q.difficultyMultiplier : (DIFFICULTY_MULTIPLIER[validatedTier] || 1.0),
+        priority: VALID_PRIORITIES.has(parseInt(q.priority)) ? parseInt(q.priority) : PRIORITY.MEDIUM,
         xpBase: typeof q.xpBase === 'number' ? q.xpBase : 50,
         xpPerObjective: typeof q.xpPerObjective === 'number' ? q.xpPerObjective : 10,
         objectives: normalizeObjectives(q.objectives),
         status: VALID_STATUSES.has(q.status) ? q.status : STATUS.ACTIVE,
-        dueDate: q.dueDate || null,
+        dueDate: normalizeDueDate(q.dueDate),
         overdueThresholdDays: q.overdueThresholdDays ?? null,
-        recurringRule: q.recurringRule || null,
-        createdAt: q.createdAt || now,
-        completedAt: q.completedAt || null,
-        lastProgressAt: q.lastProgressAt || q.createdAt || now
+        recurringRule: normalizeRecurrenceRule(q.recurringRule),
+        createdAt: normalizeTimestamp(q.createdAt || now),
+        completedAt: normalizeTimestamp(q.completedAt || null),
+        lastProgressAt: normalizeTimestamp(q.lastProgressAt || q.createdAt || now)
     };
 }
 

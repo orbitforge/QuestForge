@@ -4,7 +4,7 @@
 
 import './style.css';
 import db from './db.js';
-import { checkOverdue, checkDormancy, checkSnoozeExpiry } from './engine/questEngine.js';
+import { checkOverdue, checkDormancy, checkSnoozeExpiry, normalizeAllDates } from './engine/questEngine.js';
 import { getMomentumState, formatMomentumTimer } from './engine/momentumEngine.js';
 import { getDailyXP } from './engine/xpEngine.js';
 import { renderQuestList } from './components/questList.js';
@@ -14,12 +14,19 @@ import { renderLegendLog } from './components/legendLog.js';
 import { renderStatsPanel } from './components/statsPanel.js';
 import { renderExportPanel } from './components/exportPanel.js';
 import { renderImportModal } from './components/questImport.js';
+import { normalizeAllRecurrenceRules } from './engine/recurrenceEngine.js';
+import { normalizeExportedFlags } from './engine/eventBus.js';
 
 let currentTab = 'quests';
 let momentumInterval = null;
 
 // ── Boot ────────────────────────────────────────
 async function init() {
+    // Fix any corrupted recurrence rules, export flags, or date formats
+    await normalizeExportedFlags();
+    await normalizeAllRecurrenceRules();
+    await normalizeAllDates();
+
     // Run lifecycle checks (V2: includes snooze expiry)
     await checkSnoozeExpiry();
     await checkOverdue();

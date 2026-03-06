@@ -51,7 +51,20 @@ export async function markEventsExported(eventIds) {
     await db.events
         .where('id')
         .anyOf(eventIds)
-        .modify({ exported: true });
+        .modify({ exported: 1 });
+}
+
+/**
+ * Normalize any boolean exported flags to integers (migration helper).
+ * Call once on app boot to fix events created before the type-mismatch fix.
+ */
+export async function normalizeExportedFlags() {
+    const all = await db.events.toArray();
+    const toFix = all.filter(e => typeof e.exported === 'boolean');
+    if (toFix.length === 0) return;
+    await db.events.bulkPut(
+        toFix.map(e => ({ ...e, exported: e.exported ? 1 : 0 }))
+    );
 }
 
 /**
