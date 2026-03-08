@@ -31,4 +31,16 @@ db.version(2).stores({
     });
 });
 
+// V3 schema — adds importId
+db.version(3).stores({
+    quests: 'id, importId, status, category, dueDate, createdAt, urgencyLevel, snoozedUntil',
+    legendLog: 'id, questId, completedAt, category',
+    appState: 'key',
+    events: 'id, type, questId, timestamp, exported'
+}).upgrade(tx => {
+    return tx.table('quests').toCollection().modify(quest => {
+        if (quest.importId === undefined) quest.importId = null;
+    });
+});
+
 export default db;

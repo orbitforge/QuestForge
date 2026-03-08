@@ -281,6 +281,23 @@ export async function retireQuest(questId) {
     return quest;
 }
 
+// ── Restore ──────────────────────────────────────
+export async function restoreQuest(questId) {
+    const quest = await db.quests.get(questId);
+    if (!quest || quest.status !== STATUS.RETIRED) return null;
+
+    // Revert to active or completed based on completedAt presence
+    if (quest.completedAt && quest.objectives.length > 0 && quest.objectives.every(o => o.completed)) {
+        quest.status = STATUS.COMPLETED;
+    } else {
+        quest.status = STATUS.ACTIVE;
+        quest.lastProgressAt = new Date().toISOString();
+    }
+    await db.quests.put(quest);
+    await emitEvent(EVENT.QUEST_REACTIVATED, questId, { restored: true });
+    return quest;
+}
+
 // ── Query ───────────────────────────────────────
 export async function getQuestsByStatus() {
     const all = await db.quests.toArray();

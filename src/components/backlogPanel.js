@@ -3,7 +3,7 @@
    Dormant + Retired + Snoozed
    ═══════════════════════════════════════════════ */
 
-import { getQuestsByStatus, reactivateQuest, deleteQuest, unsnoozeQuest } from '../engine/questEngine.js';
+import { getQuestsByStatus, reactivateQuest, deleteQuest, unsnoozeQuest, restoreQuest } from '../engine/questEngine.js';
 import { DIFFICULTY_LABEL } from '../schema.js';
 
 export async function renderBacklogPanel(container, onRefresh) {
@@ -74,6 +74,7 @@ export async function renderBacklogPanel(container, onRefresh) {
                 ${quest.category ? `<span class="badge badge-category">${escapeHtml(quest.category)}</span>` : ''}
               </div>
               <div class="quest-actions">
+                <button class="btn btn-outline btn-sm btn-restore-retired" data-quest-id="${quest.id}">⏮️ Restore</button>
                 <button class="btn btn-danger btn-sm btn-delete-retired" data-quest-id="${quest.id}">🗑️ Delete</button>
               </div>
             </div>
@@ -108,6 +109,13 @@ export async function renderBacklogPanel(container, onRefresh) {
   container.querySelectorAll('.btn-delete-retired').forEach(el => {
     el.addEventListener('click', async () => {
       await deleteQuest(el.dataset.questId);
+      onRefresh();
+    });
+  });
+
+  container.querySelectorAll('.btn-restore-retired').forEach(el => {
+    el.addEventListener('click', async () => {
+      await restoreQuest(el.dataset.questId);
       onRefresh();
     });
   });

@@ -266,6 +266,7 @@ export function createQuest(overrides = {}) {
 
     return {
         id: generateId(),
+        importId: overrides.importId || null,
         title: '',
         description: '',
         category: '',

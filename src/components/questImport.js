@@ -4,6 +4,7 @@
 
 import db from '../db.js';
 import { generateId, STATUS, createObjective, normalizeRecurrenceRule, normalizeDueDate, normalizeTimestamp, DIFFICULTY_LABEL, DIFFICULTY_MULTIPLIER, PRIORITY } from '../schema.js';
+import { importQuestDefinitions, importSystemState } from '../engine/importEngine.js';
 
 const VALID_STATUSES = new Set(Object.values(STATUS));
 const VALID_DIFFICULTIES = new Set([1, 2, 3, 4, 5, 6, 7]);
@@ -67,6 +68,14 @@ export function renderImportModal(container, onImported, onClose) {
             return;
         }
 
+        if (typeof data === 'object' && !Array.isArray(data) && data.type === 'state' && data.quests && data.legendLog) {
+            // Full system state validation
+            parsedQuests = data;
+            showMsg(successEl, `✅ Valid Full System State payload. Ready to restore.`, false);
+            importBtn.disabled = false;
+            return;
+        }
+
         // Normalize to array
         const quests = Array.isArray(data) ? data : [data];
         if (quests.length === 0) {
@@ -124,13 +133,20 @@ export function renderImportModal(container, onImported, onClose) {
 
     // Import
     importBtn.addEventListener('click', async () => {
-        if (!parsedQuests || parsedQuests.length === 0) return;
+        if (!parsedQuests) return;
+        if (Array.isArray(parsedQuests) && parsedQuests.length === 0) return;
+
         importBtn.disabled = true;
         importBtn.textContent = 'Importing...';
 
         try {
-            await db.quests.bulkAdd(parsedQuests);
-            showMsg(successEl, `✅ Imported ${parsedQuests.length} quest(s) successfully!`, false);
+            if (!Array.isArray(parsedQuests) && parsedQuests.type === 'state') {
+                const count = await importSystemState(parsedQuests);
+                showMsg(successEl, `✅ System state restored successfully (${count} quests)!`, false);
+            } else {
+                const { importedCount, amendedCount } = await importQuestDefinitions(parsedQuests);
+                showMsg(successEl, `✅ Success! Imported ${importedCount}, Amended ${amendedCount} quest(s).`, false);
+            }
             parsedQuests = null;
             textarea.value = '';
             setTimeout(() => {

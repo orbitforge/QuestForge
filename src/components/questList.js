@@ -10,6 +10,7 @@ import db from '../db.js';
 let expandedQuests = new Set();
 let globalCollapse = true;
 let sortPref = { field: 'dueDate', order: 'asc' };
+let categoryFilter = 'All';
 
 /**
  * Load UI state from DB
@@ -20,6 +21,7 @@ async function loadUIState() {
     expandedQuests = new Set(state.expandedQuests || []);
     globalCollapse = state.globalCollapse !== undefined ? state.globalCollapse : true;
     sortPref = state.sortPref || { field: 'dueDate', order: 'asc' };
+    categoryFilter = state.categoryFilter || 'All';
   }
 }
 
@@ -28,7 +30,8 @@ async function saveUIState() {
     key: 'uiState',
     expandedQuests: [...expandedQuests],
     globalCollapse,
-    sortPref
+    sortPref,
+    categoryFilter
   });
 }
 
@@ -78,6 +81,22 @@ export async function renderQuestList(container, onEdit, onRefresh) {
   const groups = await getQuestsByStatus();
   const overdueCategories = await getOverdueByCategory();
 
+  // Extract all unique categories for the dropdown
+  const allCategories = new Set(['All']);
+  ['active', 'overdue', 'completed'].forEach(key => {
+    groups[key].forEach(q => {
+      if (q.category) allCategories.add(q.category);
+    });
+  });
+  const catList = [...allCategories].sort();
+
+  // Apply Category Filter BEFORE sort
+  if (categoryFilter !== 'All') {
+    ['active', 'overdue', 'completed'].forEach(key => {
+      groups[key] = groups[key].filter(q => q.category === categoryFilter);
+    });
+  }
+
   // Apply User Sorting to Active and Overdue (Completed & Snoozed keep their canonical sorts)
   groups.active = sortQuests(groups.active, sortPref);
   // Overdue: sort by user choice, but maybe keep urgency as primary?
@@ -95,6 +114,11 @@ export async function renderQuestList(container, onEdit, onRefresh) {
       </div>
 
       <div class="sort-controls">
+        <label class="sort-label">Category:</label>
+        <select class="form-select filter-select" id="category-filter-select" style="margin-right:12px;">
+          ${catList.map(c => `<option value="${escapeHtml(c)}" ${categoryFilter === c ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+        </select>
+
         <label class="sort-label">Sort by:</label>
         <select class="form-select sort-select" id="sort-field-select">
           <option value="priority" ${sortPref.field === 'priority' ? 'selected' : ''}>Priority</option>
@@ -184,6 +208,11 @@ export async function renderQuestList(container, onEdit, onRefresh) {
   });
 
   // Sort controls
+  container.querySelector('#category-filter-select')?.addEventListener('change', async (e) => {
+    categoryFilter = e.target.value;
+    await saveUIState();
+    onRefresh();
+  });
   container.querySelector('#sort-field-select')?.addEventListener('change', async (e) => {
     sortPref.field = e.target.value;
     await saveUIState();
