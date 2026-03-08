@@ -174,6 +174,7 @@ function normalizeQuest(q) {
 
     return {
         id: q.id || generateId(),
+        importId: q.importId || null,
         title: q.title || 'Untitled Quest',
         description: q.description || '',
         category: q.category || '',

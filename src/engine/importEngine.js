@@ -21,23 +21,35 @@ export function mergeQuestDefinition(existing, imported) {
     // Merge objectives carefully by ID to preserve checked status
     const existingObjs = new Map(existing.objectives.map(o => [o.id, o]));
     const mergedObjectives = imported.objectives.map(impObj => {
+        // Find existing match by id, or importId if supported in objectives later
         const extMatch = existingObjs.get(impObj.id);
         if (extMatch) {
+            // Remove from the map so we know which ones were explicitly matched
+            existingObjs.delete(impObj.id);
             return {
-                ...impObj,
+                ...impObj, // Update text / definitions
+                id: extMatch.id, // Keep the exact same internal ID
                 completed: extMatch.completed // Preserve existing checked state
             };
         }
+
+        // If no ID provided, or no match, it's a new objective
         return {
             ...impObj,
+            id: impObj.id || Math.random().toString(36).slice(2, 8),
             completed: false // New objectives are unchecked by default
         };
     });
 
+    // Rule: if an imported structural change removes an old objective, we keep it safely to avoid data loss.
+    // However, we put them at the end. The user must manually 'Delete' them from the UI if truly unwanted.
+    const preservedObjectives = Array.from(existingObjs.values());
+    const finalObjectives = [...mergedObjectives, ...preservedObjectives];
+
     return {
         ...imported,
         id: existing.id, // Must keep internal ID to overwrite record
-        importId: imported.importId || imported.id, // Store identity from import
+        importId: imported.importId !== undefined ? imported.importId : existing.importId, // Preserve import identity from payload
         status,
         completedAt,
         snoozedUntil,
@@ -45,7 +57,7 @@ export function mergeQuestDefinition(existing, imported) {
         lastProgressAt,
         urgencyLevel,
         createdAt,
-        objectives: mergedObjectives
+        objectives: finalObjectives
     };
 }
 
@@ -58,12 +70,14 @@ export async function importQuestDefinitions(quests) {
 
     await db.transaction('rw', db.quests, async () => {
         for (const q of quests) {
-            // Match by importId first
             let existing = null;
+
+            // 1. Primary Match: importId
             if (q.importId) {
                 existing = await db.quests.where('importId').equals(q.importId).first();
             }
-            // Fallback match by internal id
+
+            // 2. Fallback Match: internal id
             if (!existing && q.id) {
                 existing = await db.quests.get(q.id);
             }
@@ -73,9 +87,9 @@ export async function importQuestDefinitions(quests) {
                 await db.quests.put(merged);
                 amendedCount++;
             } else {
-                // Not existing, insert as new. Generate an importId if missing to ensure future stability.
-                const newQuest = { ...q, importId: q.importId || q.id };
-                await db.quests.put(newQuest);
+                // Not existing, insert as new. 
+                // Do NOT generate an artificial importId if missing. Leave it blank or use exact provided payload to stay stable.
+                await db.quests.put(q);
                 importedCount++;
             }
         }
