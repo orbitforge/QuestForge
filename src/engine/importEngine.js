@@ -7,10 +7,14 @@ import { emitEvent } from './eventBus.js';
  * Preserves existing progress, status, and metadata unless explicitly overwritten.
  */
 export function mergeQuestDefinition(existing, imported) {
+    const stats = {
+        objectivesAdded: 0,
+        objectivesMatched: 0,
+        objectivesPreserved: 0
+    };
+
     // Preserve status and progress fields
     const status = existing.status;
-    // We only preserve completion state if it was already completed or if all objectives match up.
-    // For simplicity and safety, we carry over completedAt, timestamps, and snoozes natively.
     const completedAt = existing.completedAt;
     const snoozedUntil = existing.snoozedUntil;
     const snoozeType = existing.snoozeType;
@@ -18,14 +22,26 @@ export function mergeQuestDefinition(existing, imported) {
     const urgencyLevel = existing.urgencyLevel;
     const createdAt = existing.createdAt;
 
-    // Merge objectives carefully by ID to preserve checked status
+    // Merge objectives carefully to preserve checked status
     const existingObjs = new Map(existing.objectives.map(o => [o.id, o]));
     const mergedObjectives = imported.objectives.map(impObj => {
-        // Find existing match by id, or importId if supported in objectives later
-        const extMatch = existingObjs.get(impObj.id);
+        // 1. Primary Match: Find existing match by id
+        let extMatch = existingObjs.get(impObj.id);
+
+        // 2. Fallback Match: Find existing match by exact text
+        if (!extMatch && impObj.text) {
+            for (const obj of existingObjs.values()) {
+                if (obj.text && obj.text.trim() === impObj.text.trim()) {
+                    extMatch = obj;
+                    break;
+                }
+            }
+        }
+
         if (extMatch) {
             // Remove from the map so we know which ones were explicitly matched
-            existingObjs.delete(impObj.id);
+            existingObjs.delete(extMatch.id);
+            stats.objectivesMatched++;
             return {
                 ...impObj, // Update text / definitions
                 id: extMatch.id, // Keep the exact same internal ID
@@ -34,6 +50,7 @@ export function mergeQuestDefinition(existing, imported) {
         }
 
         // If no ID provided, or no match, it's a new objective
+        stats.objectivesAdded++;
         return {
             ...impObj,
             id: impObj.id || Math.random().toString(36).slice(2, 8),
@@ -42,11 +59,11 @@ export function mergeQuestDefinition(existing, imported) {
     });
 
     // Rule: if an imported structural change removes an old objective, we keep it safely to avoid data loss.
-    // However, we put them at the end. The user must manually 'Delete' them from the UI if truly unwanted.
+    stats.objectivesPreserved = existingObjs.size;
     const preservedObjectives = Array.from(existingObjs.values());
     const finalObjectives = [...mergedObjectives, ...preservedObjectives];
 
-    return {
+    const merged = {
         ...imported,
         id: existing.id, // Must keep internal ID to overwrite record
         importId: imported.importId !== undefined ? imported.importId : existing.importId, // Preserve import identity from payload
@@ -59,14 +76,21 @@ export function mergeQuestDefinition(existing, imported) {
         createdAt,
         objectives: finalObjectives
     };
+
+    return { merged, stats };
 }
 
 /**
  * Processes an array of quest definitions (pure import/amendment).
  */
 export async function importQuestDefinitions(quests) {
-    let importedCount = 0;
-    let amendedCount = 0;
+    const summary = {
+        importedCount: 0,
+        amendedCount: 0,
+        objectivesAdded: 0,
+        objectivesMatched: 0,
+        objectivesPreserved: 0
+    };
 
     await db.transaction('rw', db.quests, async () => {
         for (const q of quests) {
@@ -83,19 +107,22 @@ export async function importQuestDefinitions(quests) {
             }
 
             if (existing) {
-                const merged = mergeQuestDefinition(existing, q);
+                const { merged, stats } = mergeQuestDefinition(existing, q);
                 await db.quests.put(merged);
-                amendedCount++;
+                summary.amendedCount++;
+                summary.objectivesAdded += stats.objectivesAdded;
+                summary.objectivesMatched += stats.objectivesMatched;
+                summary.objectivesPreserved += stats.objectivesPreserved;
             } else {
                 // Not existing, insert as new. 
-                // Do NOT generate an artificial importId if missing. Leave it blank or use exact provided payload to stay stable.
                 await db.quests.put(q);
-                importedCount++;
+                summary.importedCount++;
+                summary.objectivesAdded += (q.objectives?.length || 0);
             }
         }
     });
 
-    return { importedCount, amendedCount };
+    return summary;
 }
 
 /**

@@ -4,6 +4,7 @@
 
 import './style.css';
 import db from './db.js';
+import { APP_VERSION, STATUS } from './schema.js';
 import { checkOverdue, checkDormancy, checkSnoozeExpiry, normalizeAllDates } from './engine/questEngine.js';
 import { getMomentumState, formatMomentumTimer } from './engine/momentumEngine.js';
 import { getDailyXP } from './engine/xpEngine.js';
@@ -36,7 +37,13 @@ async function init() {
     startMomentumTimer();
     setupTabs();
     setupImportButton();
+    displayVersion();
     await renderTab('quests');
+}
+
+function displayVersion() {
+    const el = document.getElementById('app-version-label');
+    if (el) el.textContent = APP_VERSION;
 }
 
 // ── Tab Navigation ──────────────────────────────

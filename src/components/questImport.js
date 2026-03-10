@@ -144,8 +144,21 @@ export function renderImportModal(container, onImported, onClose) {
                 const count = await importSystemState(parsedQuests);
                 showMsg(successEl, `✅ System state restored successfully (${count} quests)!`, false);
             } else {
-                const { importedCount, amendedCount } = await importQuestDefinitions(parsedQuests);
-                showMsg(successEl, `✅ Success! Imported ${importedCount}, Amended ${amendedCount} quest(s).`, false);
+                const summary = await importQuestDefinitions(parsedQuests);
+
+                let msg = '✅ Import Complete\n\n';
+                if (summary.importedCount > 0) msg += `• Created ${summary.importedCount} new quest(s)\n`;
+                if (summary.amendedCount > 0) msg += `• Amended ${summary.amendedCount} existing quest(s)\n`;
+
+                msg += '\nObjective Summary:\n';
+                msg += `• ${summary.objectivesAdded} New objectives added\n`;
+                if (summary.objectivesMatched > 0) msg += `• ${summary.objectivesMatched} Existing objectives matched\n`;
+                if (summary.objectivesPreserved > 0) msg += `• ${summary.objectivesPreserved} Local objectives preserved\n`;
+
+                showMsg(successEl, msg, false);
+                successEl.style.whiteSpace = 'pre-wrap';
+                successEl.style.textAlign = 'left';
+                successEl.style.padding = '12px';
             }
             parsedQuests = null;
             textarea.value = '';

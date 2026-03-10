@@ -79,6 +79,7 @@ export async function renderExportPanel(container) {
     const unexportedCount = await getUnexportedCount();
     const { changed: stateChanged } = await detectStateDiff();
     const hasChanges = unexportedCount > 0 || stateChanged;
+    const baseline = await getBaseline();
 
     container.innerHTML = `
     <div class="section-header"><h2 class="section-title">📦 Export / Import</h2></div>
@@ -109,6 +110,18 @@ export async function renderExportPanel(container) {
     </div>
 
     <div id="export-status" style="display:none;" class="warning-banner"></div>
+
+    <div class="baseline-status" style="margin-top:24px; padding:16px; border-radius:12px; border:1px solid var(--border-color); background:var(--bg-card); font-size:0.875rem;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+        <span style="color:${baseline ? 'var(--accent-primary)' : 'var(--text-muted)'}; font-size:1.1rem;">${baseline ? '🟢' : '⚪'}</span>
+        <strong style="color:var(--text-main);">${baseline ? 'Delta baseline available' : 'No delta baseline yet'}</strong>
+      </div>
+      <p style="color:var(--text-muted); margin:0; line-height:1.4;">
+        ${baseline
+            ? 'Next export will compare your current state against this baseline to find changes. "No changes" means your state matches this baseline.'
+            : 'The next "Export Changes" will establish a baseline of your current state. Subsequent exports will then show what changed since that moment.'}
+      </p>
+    </div>
   `;
 
     // Export State (canonical)
