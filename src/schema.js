@@ -2,6 +2,8 @@
    Quest Schema, Constants & Factory Functions (V2)
    ═══════════════════════════════════════════════ */
 
+export const APP_VERSION = 'v1.3.1';
+
 export const STATUS = {
     ACTIVE: 'active',
     COMPLETED: 'completed',
